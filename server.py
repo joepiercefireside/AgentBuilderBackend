@@ -1,169 +1,146 @@
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain.prompts import PromptTemplate
-from langchain.memory import ConversationBufferMemory
-from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain_openai import ChatOpenAI
-from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
-from fastapi.middleware.cors import CORSMiddleware
-from supabase import create_client, Client
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import openai
 import os
-import jwt
+from langchain_community.tools.tavily_search import TavilySearchResults
+from langgraph.prebuilt import create_react_agent
+from langchain_openai import ChatOpenAI
+import firebase_admin
+from firebase_admin import credentials, auth, firestore
+from datetime import datetime
 
-app = FastAPI()
+app = Flask(__name__)
+CORS(app)
 
-# Enable CORS for React front-end
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Initialize Firebase
+cred = credentials.Certificate(os.getenv('FIREBASE_CREDENTIALS_PATH'))
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
-# Environment variables (replace with your keys)
-os.environ["OPENAI_API_KEY"] = "sk-67nIiA7-e2rxldl5qaOPRK-BvJ8O2lsJLhdeVtRZ_cT3BlbkFJSqLX3tdehY3tObgIyGgPOuIIAkn7kM4avkiO1vRTwA"
-os.environ["TAVILY_API_KEY"] = "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"
+# Initialize OpenAI and Tavily
+openai.api_key = os.getenv('OPENAI_API_KEY')
+llm = ChatOpenAI(model="gpt-4o")
+search_tool = TavilySearchResults(max_results=3)
+tools = [search_tool]
 
-# Supabase setup
-supabase: Client = create_client("https://lakxetbfkozevwlelzaj.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxha3hldGJma296ZXZ3bGVsemFqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0ODAxNzI3MywiZXhwIjoyMDYzNTkzMjczfQ.lORYixYT1P4COjSGxkU_peC7PgJhni4wO91xinovnW8")
+@app.route('/')
+def index():
+    return jsonify({"message": "AI Agent Builder Backend"})
 
-# OAuth2 for JWT
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-# Agent storage (in-memory for simplicity; use Supabase in production)
-agents = {}
-memories = {}
-
-class AgentConfig(BaseModel):
-    user_id: str
-    name: str
-    prompt: str
-    tools: list[str]
-    training_data: str
-
-class ChatRequest(BaseModel):
-    user_id: str
-    agent_name: str
-    message: str
-
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+def verify_token(token):
     try:
-        payload = jwt.decode(token, "7cxZdJVNMggD/GpYnpljui3QmDlmJGkp7DsREjPDeY8+MDpEjMewc8qw7JLi+6d6nseAtBSBBNrTTPoPstyzZQ==", algorithms=["HS256"])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return user_id
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token['uid']
     except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        print(f"Token verification failed: {e}")
+        return None
 
-@app.post("/create_agent")
-async def create_agent(config: AgentConfig, current_user: str = Depends(get_current_user)):
-    if current_user != config.user_id:
-        raise HTTPException(status_code=403, detail="Unauthorized")
-    
+@app.route('/create_agent', methods=['POST'])
+async def create_agent():
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Unauthorized"}), 401
+    token = auth_header.split(' ')[1]
+    user_id = verify_token(token)
+    if not user_id:
+        return jsonify({"error": "Invalid token"}), 401
+
+    data = request.get_json()
+    if not data or 'name' not in data or 'prompt' not in data:
+        return jsonify({"error": "Missing required fields"}), 400
+
     try:
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
-        tools = []
-        if "web_search" in config.tools:
-            tools.append(TavilySearchResults(max_results=3))
-        
-        # Handle training data
-        if config.training_data:
-            # Save training data to temporary file (replace with Supabase storage in production)
-            with open(f"temp_{config.user_id}_{config.name}.txt", "w") as f:
-                f.write(config.training_data)
-            loader = TextLoader(f"temp_{config.user_id}_{config.name}.txt")
-            documents = loader.load()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-            splits = text_splitter.split_documents(documents)
-            vectorstore = FAISS.from_documents(splits, OpenAIEmbeddings())
-            retriever = vectorstore.as_retriever()
-            tools.append(retriever)
-        
-        prompt = PromptTemplate(
-            input_variables=["input", "agent_scratchpad", "chat_history"],
-            template=f"{config.prompt}\n\nChat History:\n{{chat_history}}\n\nUser Input: {{input}}\nAgent Scratchpad: {{agent_scratchpad}}"
-        )
-        
-        agent = create_react_agent(llm, tools, prompt)
-        memory = ConversationBufferMemory()
-        agent_executor = AgentExecutor(agent=agent, tools=tools, memory=memory, verbose=True)
-        
-        # Store agent and memory
-        agent_key = f"{config.user_id}_{config.name}"
-        agents[agent_key] = agent_executor
-        memories[agent_key] = memory
-        
-        # Save to Supabase
-        supabase.table("agents").insert({
-            "user_id": config.user_id,
-            "name": config.name,
-            "prompt": config.prompt,
-            "tools": config.tools,
-            "training_data": config.training_data
-        }).execute()
-        
-        return {"status": "Agent created successfully"}
+        doc_ref = db.collection('agents').document()
+        doc_ref.set({
+            'user_id': user_id,
+            'name': data['name'],
+            'prompt': data['prompt'],
+            'tools': data.get('tools', []),
+            'trainingData': data.get('trainingData', ''),
+            'created_at': firestore.SERVER_TIMESTAMP
+        })
+        return jsonify({"message": "Agent created successfully"}), 200
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error creating agent: {e}")
+        return jsonify({"error": str(e)}), 500
 
-@app.post("/chat")
-async def chat(request: ChatRequest, current_user: str = Depends(get_current_user)):
-    if current_user != request.user_id:
-        raise HTTPException(status_code=403, detail="Unauthorized")
-    
-    agent_key = f"{request.user_id}_{request.agent_name}"
-    agent_executor = agents.get(agent_key)
-    if not agent_executor:
-        raise HTTPException(status_code=400, detail="Agent not found")
-    
+@app.route('/chat', methods=['POST'])
+async def chat():
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Unauthorized"}), 401
+    token = auth_header.split(' ')[1]
+    user_id = verify_token(token)
+    if not user_id:
+        return jsonify({"error": "Invalid token"}), 401
+
+    data = request.get_json()
+    if not data or 'message' not in data or 'agent_name' not in data:
+        return jsonify({"error": "Missing required fields"}), 400
+
     try:
-        response = agent_executor.invoke({"input": request.message})
-        # Save chat history to Supabase
-        supabase.table("chat_history").insert({
-            "user_id": request.user_id,
-            "agent_name": request.agent_name,
-            "message": request.message,
-            "response": response["output"]
-        }).execute()
-        return {"response": response["output"]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Fetch agent configuration
+        agent_docs = db.collection('agents').where('user_id', '==', user_id).where('name', '==', data['agent_name']).get()
+        if not agent_docs:
+            return jsonify({"error": "Agent not found"}), 404
+        agent_data = agent_docs[0].to_dict()
 
-@app.get("/widget/{user_id}/{agent_name}")
-async def get_widget(user_id: str, agent_name: str):
-    # Serve a simple chat widget
-    return {
-        "html": f"""
-        <div id="chat-widget">
-          <div id="messages" style="height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;"></div>
-          <input id="input" type="text" style="width: 100%; padding: 5px;" placeholder="Type your message...">
-          <button onclick="sendMessage()">Send</button>
-          <script>
+        # Create agent
+        system_message = agent_data['prompt']
+        agent_executor = create_react_agent(llm, tools, state_modifier=system_message)
+
+        # Process message
+        response = await agent_executor.ainvoke({"messages": [{"role": "user", "content": data['message']}]})
+        assistant_response = response['messages'][-1]['content']
+
+        # Save to Firestore
+        db.collection('chat_history').add({
+            'user_id': user_id,
+            'agent_name': data['agent_name'],
+            'message': data['message'],
+            'response': assistant_response,
+            'created_at': firestore.SERVER_TIMESTAMP
+        })
+
+        return jsonify({"response": assistant_response}), 200
+    except Exception as e:
+        print(f"Error processing chat: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/widget/<user_id>/<agent_name>')
+def widget(user_id, agent_name):
+    anon_token = os.getenv('FIREBASE_ANON_TOKEN')
+    if not anon_token:
+        return "Error: Anonymous token not configured", 500
+    return f"""
+    <html>
+    <body>
+        <h1>Chat with {agent_name}</h1>
+        <div id="chat"></div>
+        <input id="message" type="text" placeholder="Type your message...">
+        <button onclick="sendMessage()">Send</button>
+        <script>
             async function sendMessage() {{
-              const input = document.getElementById('input').value;
-              const messages = document.getElementById('messages');
-              messages.innerHTML += `<div>User: ${input}</div>`;
-              const response = await fetch('http://localhost:8000/chat', {{
-                method: 'POST',
-                headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify({{ user_id: '{user_id}', agent_name: '{agent_name}', message: input }})
-              }});
-              const data = await response.json();
-              messages.innerHTML += `<div>Agent: ${data.response}</div>`;
-              document.getElementById('input').value = '';
+                const message = document.getElementById('message').value;
+                try {{
+                    const response = await fetch('https://agentbuilderbackend.onrender.com/chat', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer {anon_token}' }},
+                        body: JSON.stringify({{ message, user_id: '{user_id}', agent_name: '{agent_name}' }})
+                    }});
+                    const data = await response.json();
+                    const chat = document.getElementById('chat');
+                    chat.innerHTML += `<p>User: ${message}</p><p>Agent: ${data.response || 'Error'}</p>`;
+                    document.getElementById('message').value = '';
+                }} catch (error) {{
+                    console.error('Error:', error);
+                    alert('Failed to send message');
+                }}
             }}
-          </script>
-        </div>
-        """
-    }
+        </script>
+    </body>
+    </html>
+    """
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
