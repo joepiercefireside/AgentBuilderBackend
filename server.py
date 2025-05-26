@@ -142,5 +142,21 @@ def widget(user_id, agent_name):
     </html>
     """
 
+@app.route('/refresh-token', methods=['POST'])
+async def refresh_token():
+    try:
+        import requests
+        response = requests.post(
+            f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={os.getenv('FIREBASE_API_KEY')}",
+            json={"returnSecureToken": true}
+        )
+        data = response.json()
+        if data.get('idToken'):
+            return jsonify({"idToken": data['idToken']}), 200
+        return jsonify({"error": "Failed to generate token"}), 500
+    except Exception as e:
+        print(f"Error refreshing token: {e}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

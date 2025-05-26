@@ -6,3 +6,4 @@ langgraph==0.0.50
 langchain-openai==0.1.7
 firebase-admin==6.5.0
 gunicorn==22.0.0
+requests==2.31.0
