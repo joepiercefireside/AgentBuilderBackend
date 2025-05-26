@@ -12,12 +12,12 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)
 
-# Initialize Firebase
+# Initialize Firebase  
 cred = credentials.Certificate(os.getenv('FIREBASE_CREDENTIALS_PATH'))
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# Initialize OpenAI and Tavily
+# Initialize OpenAI and Tavily  
 openai.api_key = os.getenv('OPENAI_API_KEY')
 llm = ChatOpenAI(model="gpt-4o")
 search_tool = TavilySearchResults(max_results=3)
