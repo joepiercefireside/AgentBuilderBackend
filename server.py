@@ -18,8 +18,17 @@ firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 # Initialize OpenAI and Tavily
-openai.api_key = os.getenv('OPENAI_API_KEY')
-llm = ChatOpenAI(model="gpt-4o")
+openai_api_key = os.getenv('OPENAI_API_KEY')
+if not openai_api_key:
+    print("Error: OPENAI_API_KEY not set")
+    raise ValueError("OPENAI_API_KEY environment variable is required")
+openai.api_key = openai_api_key
+try:
+    llm = ChatOpenAI(model="gpt-4o", openai_api_key=openai_api_key)
+    print("ChatOpenAI initialized successfully")
+except Exception as e:
+    print(f"Error initializing ChatOpenAI: {e}")
+    raise
 search_tool = TavilySearchResults(max_results=3)
 tools = [search_tool]
 
