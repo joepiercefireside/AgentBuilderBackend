@@ -12,12 +12,12 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)
 
-# Initialize Firebase  
+# Initialize Firebase
 cred = credentials.Certificate(os.getenv('FIREBASE_CREDENTIALS_PATH'))
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# Initialize OpenAI and Tavily  
+# Initialize OpenAI and Tavily
 openai.api_key = os.getenv('OPENAI_API_KEY')
 llm = ChatOpenAI(model="gpt-4o")
 search_tool = TavilySearchResults(max_results=3)
@@ -112,35 +112,34 @@ def widget(user_id, agent_name):
     anon_token = os.getenv('FIREBASE_ANON_TOKEN')
     if not anon_token:
         return "Error: Anonymous token not configured", 500
-    return f"""
-    <html>
-    <body>
-        <h1>Chat with {agent_name}</h1>
-        <div id="chat"></div>
-        <input id="message" type="text" placeholder="Type your message...">
-        <button onclick="sendMessage()">Send</button>
-        <script>
-            async function sendMessage() {{
-                const message = document.getElementById('message').value;
-                try {{
-                    const response = await fetch('https://agentbuilderbackend.onrender.com/chat', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer {anon_token}' }},
-                        body: JSON.stringify({{ message, user_id: '{user_id}', agent_name: '{agent_name}' }})
-                    }});
-                    const data = await response.json();
-                    const chat = document.getElementById('chat');
-                    chat.innerHTML += `<p>User: ${message}</p><p>Agent: ${data.response || 'Error'}</p>`;
-                    document.getElementById('message').value = '';
-                }} catch (error) {{
-                    console.error('Error:', error);
-                    alert('Failed to send message');
-                }}
+    return f"""<html>
+<body>
+    <h1>Chat with {agent_name}</h1>
+    <div id="chat"></div>
+    <input id="message" type="text" placeholder="Type your message...">
+    <button onclick="sendMessage()">Send</button>
+    <script>
+        async function sendMessage() {{
+            const message = document.getElementById('message').value;
+            try {{
+                const response = await fetch('https://agentbuilderbackend.onrender.com/chat', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer {anon_token}' }},
+                    body: JSON.stringify({{ message, user_id: '{user_id}', agent_name: '{agent_name}' }})
+                }});
+                const data = await response.json();
+                const chat = document.getElementById('chat');
+                chat.innerHTML += `<p>User: ${message}</p><p>Agent: ${data.response || 'Error'}</p>`;
+                document.getElementById('message').value = '';
+            }} catch (error) {{
+                console.error('Error:', error);
+                alert('Failed to send message');
             }}
-        </script>
-    </body>
-    </html>
-    """
+        }}
+    </script>
+</body>
+</html>
+"""
 
 @app.route('/refresh-token', methods=['POST'])
 async def refresh_token():
