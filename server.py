@@ -111,7 +111,9 @@ async def chat():
 def widget(user_id, agent_name):
     anon_token = os.getenv('FIREBASE_ANON_TOKEN')
     if not anon_token:
+        print("Error: FIREBASE_ANON_TOKEN not configured")
         return "Error: Anonymous token not configured", 500
+    print(f"Rendering widget for user_id: {user_id}, agent_name: {agent_name}")
     return f"""<html>
 <body>
     <h1>Chat with {agent_name}</h1>
@@ -129,7 +131,8 @@ def widget(user_id, agent_name):
                 }});
                 const data = await response.json();
                 const chat = document.getElementById('chat');
-                chat.innerHTML += `<p>User: ${message}</p><p>Agent: ${data.response || 'Error'}</p>`;
+                const responseText = data.response ? data.response : 'Error';
+                chat.innerHTML += `<p>User: ${message}</p><p>Agent: ${responseText}</p>`;
                 document.getElementById('message').value = '';
             }} catch (error) {{
                 console.error('Error:', error);
