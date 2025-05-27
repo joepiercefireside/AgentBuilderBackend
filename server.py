@@ -1,7 +1,8 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import openai
 import os
+import httpx
+import openai
 from openai import OpenAI
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
@@ -20,7 +21,15 @@ openai_api_key = os.getenv('OPENAI_API_KEY')
 if not openai_api_key:
     print("Error: OPENAI_API_KEY not set")
     raise ValueError("OPENAI_API_KEY environment variable is required")
-openai_client = OpenAI(api_key=openai_api_key)
+try:
+    openai_client = OpenAI(
+        api_key=openai_api_key,
+        http_client=httpx.Client()  # Explicitly use httpx.Client without proxies
+    )
+    print("OpenAI client initialized successfully")
+except Exception as e:
+    print(f"Error initializing OpenAI client: {e}")
+    raise
 
 @app.route('/')
 def index():
