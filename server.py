@@ -2,9 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import openai
 import os
-from langchain_community.tools.tavily_search import TavilySearchResults
-from langgraph.prebuilt import create_react_agent
-from langchain_openai import ChatOpenAI
+from openai import OpenAI
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
 from datetime import datetime
@@ -17,20 +15,12 @@ cred = credentials.Certificate(os.getenv('FIREBASE_CREDENTIALS_PATH'))
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# Initialize OpenAI and Tavily
+# Initialize OpenAI
 openai_api_key = os.getenv('OPENAI_API_KEY')
 if not openai_api_key:
     print("Error: OPENAI_API_KEY not set")
     raise ValueError("OPENAI_API_KEY environment variable is required")
-openai.api_key = openai_api_key
-try:
-    llm = ChatOpenAI(model="gpt-4o", openai_api_key=openai_api_key)
-    print("ChatOpenAI initialized successfully")
-except Exception as e:
-    print(f"Error initializing ChatOpenAI: {e}")
-    raise
-search_tool = TavilySearchResults(max_results=3)
-tools = [search_tool]
+openai_client = OpenAI(api_key=openai_api_key)
 
 @app.route('/')
 def index():
@@ -94,13 +84,13 @@ async def chat():
             return jsonify({"error": "Agent not found"}), 404
         agent_data = agent_docs[0].to_dict()
 
-        # Create agent
-        system_message = agent_data['prompt']
-        agent_executor = create_react_agent(llm, tools, state_modifier=system_message)
-
-        # Process message
-        response = await agent_executor.ainvoke({"messages": [{"role": "user", "content": data['message']}]})
-        assistant_response = response['messages'][-1]['content']
+        # Call OpenAI directly
+        prompt = f"{agent_data['prompt']}\nUser: {data['message']}"
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        assistant_response = response.choices[0].message.content
 
         # Save to Firestore
         db.collection('chat_history').add({
