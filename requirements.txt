@@ -1,9 +1,9 @@
 flask==2.3.2
 flask-cors==4.0.0
-openai==1.35.7
+openai==1.14.0
 langchain-community==0.0.38
 langgraph==0.0.50
-langchain-openai==0.1.8
+langchain-openai==0.0.8
 firebase-admin==6.5.0
 gunicorn==22.0.0
 requests==2.31.0
